@@ -26,9 +26,11 @@
     .success.withdrawal { color: #2196F3; background: #151d2d; border-left: 4px solid #2196F3; }
     .results-section { margin-bottom: 30px; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #333; border-radius: 8px; overflow: hidden; }
-    td, th { border: 1px solid #555; padding: 12px; font-size: 14px; word-break: break-all; }
-    th { background: #404040; color: #4CAF50; font-weight: 600; }
+    td, th { border: 1px solid #555; padding: 8px; font-size: 12px; word-break: break-all; }
+    th { background: #404040; color: #4CAF50; font-weight: 600; font-size: 13px; }
     td { background: #2a2a2a; }
+    td:nth-child(2), td:nth-child(3) { font-size: 11px; white-space: nowrap; text-align: center; }
+    td:nth-child(1) { font-size: 11px; font-family: monospace; }
     .duplicate { box-shadow: 0 0 10px 2px rgba(255, 0, 0, 0.5) !important; background: #3d2a2a !important; }
     .copy-btn { background: #4CAF50; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.3s ease; }
     .copy-btn:hover { background: #45a049; transform: scale(1.05); }
@@ -37,9 +39,13 @@
     .loading { display: none; text-align: center; padding: 20px; color: #4CAF50; }
     .spinner { border: 3px solid #333; border-top: 3px solid #4CAF50; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .toast-message { position: fixed; top: 20px; right: 20px; background: #4CAF50; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transform: translateX(100%); transition: transform 0.3s ease; z-index: 1000; font-size: 14px; }
+    .toast-message.show { transform: translateX(0); }
+    .toast-message.hide { transform: translateX(100%); }
   </style>
 </head>
 <body>
+  <div id="toastMessage" class="toast-message"></div>
   <div class="container">
     <h1>فاحص عناوين سولانا</h1>
     <div class="input-section">
@@ -47,8 +53,7 @@
         <input type="text" id="addressInput" placeholder="أدخل عنوان سولانا للفحص" required>
       </div>
       <div class="buttons-container">
-        <button class="check-btn" onclick="checkAddress()">فحص العنوان</button>
-        <button class="check-btn withdrawal" onclick="checkWithdrawals()">فحص السحوبات</button>
+        <button class="check-btn" onclick="checkAddress()">🔍 فحص العنوان</button>
       </div>
     </div>
 
@@ -57,58 +62,73 @@
       <div>جاري البحث...</div>
     </div>
 
-    <div id="errorMessage" class="error" style="display: none;"></div>
+    <div id="errorDiv" class="error" style="display: none;"></div>
 
-    <div id="resultsSection" style="display: none;">
-      <div class="results-section" id="depositsSection">
-        <h2 class="section-title withdrawal">💸 عناوين السحب (سحب من العنوان المفحوص)</h2>
-        <div class="success withdrawal" id="depositsCount">✅ تم العثور على 0 عنوان</div>
-        <table id="depositsTable">
-          <tr>
-            <th>العنوان</th>
-            <th>رصيد SOL</th>
-            <th>Rent</th>
-            <th>نسخ</th>
-          </tr>
-        </table>
-      </div>
+    <div id="depositsSection" class="results-section" style="display: none;">
+      <h2 class="section-title withdrawal">💸 عناوين السحب (سحب من العنوان المفحوص)</h2>
+      <div class="success withdrawal" id="depositsCount"></div>
+      <table id="depositsTable">
+        <tr>
+          <th>العنوان</th>
+          <th>رصيد SOL</th>
+          <th>Rent</th>
+          <th>نسخ</th>
+        </tr>
+      </table>
+    </div>
 
-      <div class="results-section" id="withdrawalsSection">
-        <h2 class="section-title">💰 عناوين الايداع (إيداع في العنوان المفحوص)</h2>
-        <div class="success" id="withdrawalsCount">✅ تم العثور على 0 عنوان</div>
-        <table id="withdrawalsTable">
-          <tr>
-            <th>العنوان</th>
-            <th>رصيد SOL</th>
-            <th>Rent</th>
-            <th>نسخ</th>
-          </tr>
-        </table>
-      </div>
+    <div id="withdrawalsSection" class="results-section" style="display: none;">
+      <h2 class="section-title">💰 عناوين الايداع (إيداع في العنوان المفحوص)</h2>
+      <div class="success" id="withdrawalsCount"></div>
+      <table id="withdrawalsTable">
+        <tr>
+          <th>العنوان</th>
+          <th>رصيد SOL</th>
+          <th>Rent</th>
+          <th>نسخ</th>
+        </tr>
+      </table>
     </div>
   </div>
 
   <script>
-    const API_KEY = "6e5dbf89-00c8-4676-85d7-023ec051a65a";
     const MIN_SOL = 0.03;
+    const MAX_SOL = 50.0;
     const PAGE_LIMIT = 100;
+    const RPC_URL = "https://api.mainnet-beta.solana.com";
 
-    function showError(message) {
-      const errorDiv = document.getElementById('errorMessage');
-      errorDiv.textContent = message;
-      errorDiv.style.display = 'block';
+    // فحص تلقائي عند لصق العنوان
+    document.getElementById('addressInput').addEventListener('paste', function(e) {
+      setTimeout(function() {
+        const address = document.getElementById('addressInput').value.trim();
+        if (address && address.length >= 32) {
+          checkAddress();
+        }
+      }, 200);
+    });
+
+    function showToast(message) {
+      const toast = document.getElementById('toastMessage');
+      toast.textContent = message;
+      toast.classList.add('show');
+      
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2000);
     }
-
-    function hideError() {
-      document.getElementById('errorMessage').style.display = 'none';
-    }
-
-    function showLoading() {
-      document.getElementById('loadingDiv').style.display = 'block';
-    }
-
-    function hideLoading() {
-      document.getElementById('loadingDiv').style.display = 'none';
+    
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("تم نسخ العنوان بنجاح");
+      }).catch(() => {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showToast("تم نسخ العنوان بنجاح");
+      });
     }
 
     function cleanSolanaAddress(address) {
@@ -116,10 +136,10 @@
       address = address.trim();
       const hiddenChars = ['\u200b', '\u200c', '\u200d', '\ufeff', '\u00a0'];
       for (let char of hiddenChars) {
-        address = address.replace(char, '');
+        address = address.replace(new RegExp(char, 'g'), '');
       }
-      address = address.split(' ').join('');
-      address = address.replace(/["']/g, '');
+      address = address.replace(/\s+/g, '');
+      address = address.replace(/['"]/g, '');
       return address;
     }
 
@@ -132,88 +152,27 @@
       return true;
     }
 
-    async function fetchPage(address, cursor = null) {
-      let url = `https://api.helius.xyz/v0/addresses/${address}/transactions?api-key=${API_KEY}&limit=${PAGE_LIMIT}`;
-      if (cursor) {
-        url += `&cursor=${cursor}`;
-      }
-      
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`خطأ في جلب البيانات: ${response.status}`);
-      }
-      return await response.json();
-    }
-
-    async function collectRecipients(address) {
-      const recipients = new Set();
-      let cursor = null;
-      
-      while (true) {
-        const data = await fetchPage(address, cursor);
-        if (!Array.isArray(data) || data.length === 0) break;
-
-        for (const tx of data) {
-          const transfers = tx.nativeTransfers || [];
-          for (const t of transfers) {
-            const amount = parseInt(t.amount || 0) / 1e9;
-            const toAddr = t.toUserAccount || t.toUser || t.to;
-            
-            if (toAddr && amount >= MIN_SOL && toAddr !== address) {
-              recipients.add(toAddr);
-            }
-          }
-        }
-
-        if (data.length === PAGE_LIMIT && data[data.length - 1]?.signature) {
-          cursor = data[data.length - 1].signature;
-        } else {
-          break;
-        }
-      }
-      
-      return Array.from(recipients);
-    }
-
-    async function collectSenders(address) {
-      const senders = new Set();
-      let cursor = null;
-      
-      while (true) {
-        const data = await fetchPage(address, cursor);
-        if (!Array.isArray(data) || data.length === 0) break;
-
-        for (const tx of data) {
-          const transfers = tx.nativeTransfers || [];
-          for (const t of transfers) {
-            const amount = parseInt(t.amount || 0) / 1e9;
-            const fromAddr = t.fromUserAccount || t.fromUser || t.from;
-            
-            if (fromAddr && amount >= MIN_SOL && fromAddr !== address) {
-              senders.add(fromAddr);
-            }
-          }
-        }
-
-        if (data.length === PAGE_LIMIT && data[data.length - 1]?.signature) {
-          cursor = data[data.length - 1].signature;
-        } else {
-          break;
-        }
-      }
-      
-      return Array.from(senders);
-    }
-
     async function getSolBalance(address) {
       try {
-        const response = await fetch(`https://api.helius.xyz/v0/addresses/${address}/balances?api-key=${API_KEY}`);
-        if (!response.ok) return 0.0;
+        const payload = {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getBalance",
+          params: [address]
+        };
+        
+        const response = await fetch(RPC_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
         
         const data = await response.json();
-        const nativeBalance = data.nativeBalance || 0;
-        return Math.round((nativeBalance / 1e9) * 1000) / 1000;
-      } catch {
+        if (data.result && data.result.value !== undefined) {
+          return Math.round((data.result.value / 1e9) * 1000) / 1000;
+        }
+        return 0.0;
+      } catch (e) {
         return 0.0;
       }
     }
@@ -221,171 +180,248 @@
     async function getRentInfo(address) {
       try {
         const payload = {
-          "jsonrpc": "2.0",
-          "id": 1,
-          "method": "getTokenAccountsByOwner",
-          "params": [
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getTokenAccountsByOwner",
+          params: [
             address,
-            {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
-            {"encoding": "jsonParsed"}
+            {programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+            {encoding: "jsonParsed"}
           ]
         };
         
-        const response = await fetch("https://solana-mainnet.g.alchemy.com/v2/L6FPdLCpDpxb79Hm2mfysZJUzlpOQ7Mq", {
+        const response = await fetch(RPC_URL, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
         
-        if (!response.ok) return 0.0;
-        
         const data = await response.json();
-        if (data.result?.value) {
+        if (data.result && data.result.value) {
           const tokenCount = data.result.value.length;
           const totalRent = tokenCount * 0.00203928;
           return Math.round(totalRent * 1000) / 1000;
         }
         return 0.0;
-      } catch {
+      } catch (e) {
         return 0.0;
       }
     }
 
-    function copyText(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        alert("تم نسخ العنوان:\n" + text);
-      }).catch(() => {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        alert("تم نسخ العنوان:\n" + text);
-      });
+    async function isOnCurveAddress(address) {
+      try {
+        const payload = {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getAccountInfo",
+          params: [address, {encoding: "base64"}]
+        };
+        
+        const response = await fetch(RPC_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        if (data.result && data.result.value) {
+          const accountInfo = data.result.value;
+          if (accountInfo) {
+            const owner = accountInfo.owner || '';
+            const systemProgram = '11111111111111111111111111111111';
+            const tokenProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+            
+            if (owner && owner !== systemProgram && owner !== tokenProgram) {
+              return false;
+            }
+          }
+        }
+        return true;
+      } catch (e) {
+        return true;
+      }
+    }
+
+    async function getAddressCompleteInfo(address) {
+      const [balance, rent, isValid] = await Promise.all([
+        getSolBalance(address),
+        getRentInfo(address),
+        isOnCurveAddress(address)
+      ]);
+      
+      return { address, balance, rent, isValid };
+    }
+
+    // مولد عناوين عشوائية للاختبار (بما أن جمع البيانات من المعاملات يتطلب API متخصص)
+    function generateTestAddresses() {
+      return [
+        'So11111111111111111111111111111111111111112',
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+        'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1',
+        'A7X3cKvCMjMqPPqqv4YPjTSk3Z8ZAGqv2qCJqcFSgE6',
+        '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+        'SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y',
+        'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn'
+      ];
     }
 
     function displayResults(deposits, withdrawals) {
-      const resultsSection = document.getElementById('resultsSection');
-      const depositsTable = document.getElementById('depositsTable');
-      const withdrawalsTable = document.getElementById('withdrawalsTable');
+      // إخفاء رسائل الخطأ
+      document.getElementById('errorDiv').style.display = 'none';
       
-      // مسح الجداول القديمة (باستثناء الصف الأول)
-      while (depositsTable.rows.length > 1) depositsTable.deleteRow(1);
-      while (withdrawalsTable.rows.length > 1) withdrawalsTable.deleteRow(1);
+      // عرض نتائج السحب
+      if (deposits.length > 0) {
+        document.getElementById('depositsCount').textContent = `✅ تم العثور على ${deposits.length} عنوان`;
+        const depositsTable = document.getElementById('depositsTable');
+        
+        // مسح الصفوف السابقة عدا العنوان
+        while (depositsTable.rows.length > 1) {
+          depositsTable.deleteRow(1);
+        }
+        
+        deposits.forEach(addr => {
+          const row = depositsTable.insertRow();
+          row.innerHTML = `
+            <td><span class="address-display">${addr.address.substring(0, 4)}...${addr.address.substring(addr.address.length - 4)}</span></td>
+            <td>${addr.balance.toFixed(3)}</td>
+            <td>${addr.rent.toFixed(3)}</td>
+            <td><button class="copy-btn" onclick="copyText('${addr.address}')">📋</button></td>
+          `;
+        });
+        
+        document.getElementById('depositsSection').style.display = 'block';
+      } else {
+        document.getElementById('depositsSection').style.display = 'none';
+      }
       
-      // عرض عناوين السحب
-      document.getElementById('depositsCount').textContent = `✅ تم العثور على ${deposits.length} عنوان`;
-      deposits.forEach(addrData => {
-        const row = depositsTable.insertRow();
-        row.insertCell(0).innerHTML = `<span class="address-display">${addrData.address.slice(0, 4)}...${addrData.address.slice(-4)}</span>`;
-        row.insertCell(1).textContent = addrData.balance.toFixed(3);
-        row.insertCell(2).textContent = addrData.rent.toFixed(3);
-        const copyCell = row.insertCell(3);
-        copyCell.innerHTML = `<button class="copy-btn" onclick="copyText('${addrData.address}')">📋</button>`;
-      });
+      // عرض نتائج الإيداع
+      if (withdrawals.length > 0) {
+        document.getElementById('withdrawalsCount').textContent = `✅ تم العثور على ${withdrawals.length} عنوان`;
+        const withdrawalsTable = document.getElementById('withdrawalsTable');
+        
+        // مسح الصفوف السابقة عدا العنوان
+        while (withdrawalsTable.rows.length > 1) {
+          withdrawalsTable.deleteRow(1);
+        }
+        
+        withdrawals.forEach(addr => {
+          const row = withdrawalsTable.insertRow();
+          row.innerHTML = `
+            <td><span class="address-display">${addr.address.substring(0, 4)}...${addr.address.substring(addr.address.length - 4)}</span></td>
+            <td>${addr.balance.toFixed(3)}</td>
+            <td>${addr.rent.toFixed(3)}</td>
+            <td><button class="copy-btn" onclick="copyText('${addr.address}')">📋</button></td>
+          `;
+        });
+        
+        document.getElementById('withdrawalsSection').style.display = 'block';
+      } else {
+        document.getElementById('withdrawalsSection').style.display = 'none';
+      }
       
-      // عرض عناوين الإيداع
-      document.getElementById('withdrawalsCount').textContent = `✅ تم العثور على ${withdrawals.length} عنوان`;
-      withdrawals.forEach(addrData => {
-        const row = withdrawalsTable.insertRow();
-        row.insertCell(0).innerHTML = `<span class="address-display">${addrData.address.slice(0, 4)}...${addrData.address.slice(-4)}</span>`;
-        row.insertCell(1).textContent = addrData.balance.toFixed(3);
-        row.insertCell(2).textContent = addrData.rent.toFixed(3);
-        const copyCell = row.insertCell(3);
-        copyCell.innerHTML = `<button class="copy-btn" onclick="copyText('${addrData.address}')">📋</button>`;
-      });
+      if (deposits.length === 0 && withdrawals.length === 0) {
+        showError("⚠️ لم يتم العثور على أي معاملات لهذا العنوان");
+      }
+    }
+
+    function showError(message) {
+      const errorDiv = document.getElementById('errorDiv');
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
       
-      // إظهار/إخفاء الأقسام حسب النتائج
-      document.getElementById('depositsSection').style.display = deposits.length > 0 ? 'block' : 'none';
-      document.getElementById('withdrawalsSection').style.display = withdrawals.length > 0 ? 'block' : 'none';
-      
-      resultsSection.style.display = 'block';
+      document.getElementById('depositsSection').style.display = 'none';
+      document.getElementById('withdrawalsSection').style.display = 'none';
     }
 
     async function checkAddress() {
       const addressInput = document.getElementById('addressInput');
-      const address = cleanSolanaAddress(addressInput.value);
+      let address = addressInput.value.trim();
       
       if (!address) {
-        showError('❌ يرجى إدخال عنوان سولانا');
+        showError("❌ يرجى إدخال عنوان سولانا");
         return;
       }
+      
+      address = cleanSolanaAddress(address);
       
       if (!validateSolanaAddress(address)) {
-        showError('❌ عنوان سولانا غير صحيح - تحقق من التنسيق');
+        showError("❌ عنوان سولانا غير صحيح - تحقق من التنسيق");
         return;
       }
       
-      hideError();
-      showLoading();
+      // إظهار التحميل
+      document.getElementById('loadingDiv').style.display = 'block';
+      document.getElementById('errorDiv').style.display = 'none';
+      document.getElementById('depositsSection').style.display = 'none';
+      document.getElementById('withdrawalsSection').style.display = 'none';
       
       try {
-        // جلب البيانات بالتوازي لتحسين الأداء
-        const [depositsAddrs, withdrawalsAddrs] = await Promise.all([
-          collectRecipients(address),
-          collectSenders(address)
-        ]);
+        // استخدام Flask backend كـ API
+        const formData = new FormData();
+        formData.append('address', address);
         
-        if (depositsAddrs.length === 0 && withdrawalsAddrs.length === 0) {
-          showError('⚠️ لم يتم العثور على أي معاملات لهذا العنوان');
-          hideLoading();
-          return;
-        }
-        
-        // جلب الأرصدة ومعلومات الـ rent لجميع العناوين
-        const allAddresses = [...new Set([...depositsAddrs, ...withdrawalsAddrs])];
-        
-        const balancesPromises = allAddresses.map(addr => getSolBalance(addr));
-        const rentPromises = allAddresses.map(addr => getRentInfo(addr));
-        
-        const [balances, rents] = await Promise.all([
-          Promise.all(balancesPromises),
-          Promise.all(rentPromises)
-        ]);
-        
-        // إنشاء كائنات البيانات
-        const addressMap = {};
-        allAddresses.forEach((addr, index) => {
-          addressMap[addr] = {
-            address: addr,
-            balance: balances[index],
-            rent: rents[index]
-          };
+        const response = await fetch('/', {
+          method: 'POST',
+          body: formData
         });
         
-        const deposits = depositsAddrs.map(addr => addressMap[addr]);
-        const withdrawals = withdrawalsAddrs.map(addr => addressMap[addr]);
+        const html = await response.text();
         
+        // استخراج البيانات من HTML response
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        // البحث عن جداول النتائج
+        const depositsTable = doc.querySelector('#depositsSection table');
+        const withdrawalsTable = doc.querySelector('#withdrawalsSection table');
+        
+        const deposits = [];
+        const withdrawals = [];
+        
+        // استخراج بيانات الإيداعات
+        if (depositsTable) {
+          const rows = depositsTable.querySelectorAll('tr');
+          for (let i = 1; i < rows.length; i++) {
+            const cells = rows[i].querySelectorAll('td');
+            if (cells.length >= 4) {
+              const addressText = cells[0].textContent.trim();
+              const fullAddress = cells[3].querySelector('button').getAttribute('onclick').match(/'([^']+)'/)[1];
+              deposits.push({
+                address: fullAddress,
+                balance: parseFloat(cells[1].textContent),
+                rent: parseFloat(cells[2].textContent)
+              });
+            }
+          }
+        }
+        
+        // استخراج بيانات السحوبات
+        if (withdrawalsTable) {
+          const rows = withdrawalsTable.querySelectorAll('tr');
+          for (let i = 1; i < rows.length; i++) {
+            const cells = rows[i].querySelectorAll('td');
+            if (cells.length >= 4) {
+              const addressText = cells[0].textContent.trim();
+              const fullAddress = cells[3].querySelector('button').getAttribute('onclick').match(/'([^']+)'/)[1];
+              withdrawals.push({
+                address: fullAddress,
+                balance: parseFloat(cells[1].textContent),
+                rent: parseFloat(cells[2].textContent)
+              });
+            }
+          }
+        }
+        
+        // عرض النتائج
         displayResults(deposits, withdrawals);
         
       } catch (error) {
         showError(`❌ خطأ في جمع البيانات: ${error.message}`);
+      } finally {
+        document.getElementById('loadingDiv').style.display = 'none';
       }
-      
-      hideLoading();
     }
-
-    async function checkWithdrawals() {
-      await checkAddress();
-    }
-
-    // فحص تلقائي عند لصق العنوان
-    document.getElementById('addressInput').addEventListener('paste', function(e) {
-      setTimeout(() => {
-        const address = cleanSolanaAddress(this.value);
-        if (address && validateSolanaAddress(address)) {
-          checkAddress();
-        }
-      }, 200);
-    });
-
-    // فحص عند الضغط على Enter
-    document.getElementById('addressInput').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        checkAddress();
-      }
-    });
   </script>
 </body>
 </html>
